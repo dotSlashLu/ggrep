@@ -2,13 +2,12 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
 	"path"
-	"runtime"
+	"regexp"
 	"strings"
 	"sync"
 )
@@ -30,10 +29,11 @@ type cfg struct {
 	bufSize   int
 	recursive bool
 	// exclude glob
-	exclude  excludeCfg
-	parallel int
-	dst      string
-	pattern  string
+	exclude   excludeCfg
+	parallel  int
+	dst       string
+	rePattern *regexp.Regexp
+	pattern   string
 }
 
 const (
@@ -43,36 +43,6 @@ const (
 )
 
 var gCfg cfg
-
-func parseFlags() {
-	flag.IntVar(&gCfg.szlimit, "l", gSzlimit, "limit of file size")
-	flag.IntVar(&gCfg.bufSize, "b", gBufSize, "buffer size in byte for each "+
-		" file in parallel")
-	flag.BoolVar(&gCfg.recursive, "r", gRecursive, "recursive")
-	numCPU := runtime.NumCPU()
-	flag.IntVar(&gCfg.parallel, "p", numCPU, "how many files to match in "+
-		"parallel")
-	flag.Var(&gCfg.exclude, "x",
-		"exclude glob, can have multiple values like -x *.md -x .git")
-	flag.Parse()
-
-	// TODO: support multiple dst path
-	if flag.NArg() == 0 {
-		fmt.Printf("Usage: %s [options] pattern [path]\n", os.Args[0])
-		fmt.Println("path: the file or path to search, default is the " +
-			"current path\n\n")
-		fmt.Println("options:")
-		flag.PrintDefaults()
-		os.Exit(1)
-	}
-
-	args := flag.Args()
-	gCfg.pattern = args[0]
-	gCfg.dst = "."
-	if flag.NArg() > 1 {
-		gCfg.dst = args[1]
-	}
-}
 
 func readDir(dir string, tasks chan string) {
 	finfos, err := ioutil.ReadDir(dir)
@@ -115,17 +85,24 @@ func matchFile(fpath string) error {
 		// this copies buf which is a huge perf drawback
 		src := append(boundary, buf...)
 
+		/* exact string match */
 		// find all indicies in buf that matches the pattern
-		idx, fromI := 0, 0
-		for {
-			idx = strings.Index(string(src[fromI:]), gCfg.pattern)
-			if idx == -1 {
-				break
-			}
-			// TODO
-			// should print file idx not idx from current buf
-			fmt.Println(fpath, "matched", fromI+idx)
-			fromI += idx + 1
+		// idx, fromI := 0, 0
+		// for {
+		// 	idx = strings.Index(string(src[fromI:]), gCfg.pattern)
+		// 	if idx == -1 {
+		// 		break
+		// 	}
+		// 	// TODO
+		// 	// should print file idx not idx from current buf
+		// 	fmt.Println(fpath, "matched", fromI+idx)
+		// 	fromI += idx + 1
+		// }
+
+		// regex match
+		matched := gCfg.rePattern.FindAllIndex(src, -1)
+		if matched != nil {
+			fmt.Println(fpath, "matched indicies", matched)
 		}
 		// - 3 to ensure the utf-8 boundary is inside our boundary
 		// - (len(pattern) - 1) ensures pattern not on boundary
@@ -137,7 +114,6 @@ func matchFile(fpath string) error {
 }
 
 func main() {
-	fmt.Println("gogrep")
 	parseFlags()
 	fmt.Printf("%+v\n", gCfg)
 
@@ -149,6 +125,7 @@ func main() {
 		go func() {
 			defer wg.Done()
 			for f := range tasks {
+				// fmt.Println("got task", f)
 				matchFile(f)
 			}
 		}()
