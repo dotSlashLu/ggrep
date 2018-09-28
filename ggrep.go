@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"unicode/utf8"
 )
 
 type excludeCfg []string
@@ -29,11 +30,13 @@ type cfg struct {
 	bufSize   int
 	recursive bool
 	// exclude glob
-	exclude   excludeCfg
-	parallel  int
-	dst       string
-	rePattern *regexp.Regexp
-	pattern   string
+	exclude    excludeCfg
+	parallel   int
+	dsts       []string
+	rePattern  *regexp.Regexp
+	pattern    string
+	debug      bool
+	stringMode bool
 }
 
 const (
@@ -55,10 +58,8 @@ func readDir(dir string, tasks chan string) {
 			if !gCfg.recursive {
 				continue
 			}
-			// fmt.Println("is dir, Name():", fname)
 			readDir(fname, tasks)
 		} else {
-			// fmt.Println("gened task", fname)
 			tasks <- fname
 		}
 	}
@@ -74,40 +75,51 @@ func matchFile(fpath string) error {
 	var boundary []byte
 	for {
 		_, err = f.Read(buf)
-		// n, err := f.Read(buf)
-		// fmt.Println("read ", n)
 		if err != nil && err != io.EOF {
 			return err
 		} else if err == io.EOF {
 			return nil
 		}
-		// TODO
-		// this copies buf which is a huge perf drawback
+
+		// TODO this might be very wrong
+		//	encodings like JIS and GBK might not be valid UTF8 and apparently
+		// 	they are not binary
+		isBinary := !utf8.Valid(buf)
+		if isBinary {
+			if gCfg.debug {
+				fmt.Println(fpath, "is not utf8(compatible), abandon")
+			}
+			return nil
+		}
+
+		// TODO this copies buf which is a huge perf drawback
 		src := append(boundary, buf...)
 
-		/* exact string match */
-		// find all indicies in buf that matches the pattern
-		// idx, fromI := 0, 0
-		// for {
-		// 	idx = strings.Index(string(src[fromI:]), gCfg.pattern)
-		// 	if idx == -1 {
-		// 		break
-		// 	}
-		// 	// TODO
-		// 	// should print file idx not idx from current buf
-		// 	fmt.Println(fpath, "matched", fromI+idx)
-		// 	fromI += idx + 1
-		// }
-
-		// regex match
-		matched := gCfg.rePattern.FindAllIndex(src, -1)
-		if matched != nil {
-			fmt.Println(fpath, "matched indicies", matched)
+		if gCfg.stringMode {
+			// exact string match
+			// find all indicies in buf that matches the pattern
+			idx, fromI := 0, 0
+			for {
+				idx = strings.Index(string(src[fromI:]), gCfg.pattern)
+				if idx == -1 {
+					break
+				}
+				// TODO should print file idx not idx from current buf
+				fmt.Println(fpath, "matched", fromI+idx)
+				fromI += idx + 1
+			}
+		} else {
+			// regex match
+			matched := gCfg.rePattern.FindAllIndex(src, -1)
+			if matched != nil {
+				fmt.Println(fpath, "matched indicies", matched)
+			}
 		}
-		// - 3 to ensure the utf-8 boundary is inside our boundary
+
+		// - 4 to ensure the utf-8 boundary is inside our boundary
 		// - (len(pattern) - 1) ensures pattern not on boundary
 		// fmt.Println("len src", len(src), "len patter", len(gCfg.pattern))
-		boundaryI := len(src) - 3 - (len(gCfg.pattern) - 1)
+		boundaryI := len(src) - 4 - (len(gCfg.pattern) - 1)
 		boundary = src[boundaryI:]
 	}
 	return nil
@@ -131,15 +143,17 @@ func main() {
 		}()
 	}
 
-	// if dst is a file, just match it
-	dirinfo, err := os.Lstat(gCfg.dst)
-	if err != nil {
-		panic(err)
-	}
-	if !dirinfo.IsDir() {
-		tasks <- gCfg.dst
-	} else {
-		readDir(gCfg.dst, tasks)
+	for _, dst := range gCfg.dsts {
+		// if dst is a file, just match it
+		dirinfo, err := os.Lstat(dst)
+		if err != nil {
+			panic(err)
+		}
+		if !dirinfo.IsDir() {
+			tasks <- dst
+		} else {
+			readDir(dst, tasks)
+		}
 	}
 
 	close(tasks)

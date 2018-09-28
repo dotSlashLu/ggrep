@@ -14,13 +14,14 @@ func parseFlags() {
 		" file in parallel")
 	flag.BoolVar(&gCfg.recursive, "r", gRecursive, "recursive")
 	numCPU := runtime.NumCPU()
-	flag.IntVar(&gCfg.parallel, "p", numCPU, "how many files to match in "+
+	flag.IntVar(&gCfg.parallel, "p", numCPU, "number of files to match in "+
 		"parallel")
 	flag.Var(&gCfg.exclude, "x",
 		"exclude glob, can have multiple values like -x *.md -x .git")
+	flag.BoolVar(&gCfg.debug, "D", false, "debug mode")
+	flag.BoolVar(&gCfg.stringMode, "S", false, "string match mode")
 	flag.Parse()
 
-	// TODO: support multiple dst path
 	if flag.NArg() == 0 {
 		fmt.Printf("Usage: %s [options] pattern [path]\n", os.Args[0])
 		fmt.Println("path: the file or path to search, default is the " +
@@ -33,8 +34,9 @@ func parseFlags() {
 	args := flag.Args()
 	gCfg.pattern = args[0]
 	gCfg.rePattern = regexp.MustCompile(args[0])
-	gCfg.dst = "."
 	if flag.NArg() > 1 {
-		gCfg.dst = args[1]
+		gCfg.dsts = args[1:]
+	} else {
+		gCfg.dsts = []string{"."}
 	}
 }
